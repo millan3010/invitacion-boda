@@ -350,6 +350,7 @@ section { padding: 100px 0; position: relative; z-index: 2; }
 .qr-code-container canvas, .qr-code-container img { border: 1px solid var(--border); padding: 8px; background: #fff; border-radius: 4px; }
 .qr-id { font-family: 'Cormorant Garamond',serif; font-size: 22px; color: var(--gold); letter-spacing: 2px; margin: 12px 0; }
 .qr-instruction { font-size: 12px; color: var(--silver-lo); line-height: 1.8; }
+.qr-personal { font-size: 10px; color: var(--rose); margin-top: 12px; letter-spacing: 1px; font-style: italic; }
 .form-success { display: none; text-align: center; padding: 20px 0; }
 .form-success.show { display: block; }
 .form-body.hide { display: none; }
@@ -665,6 +666,7 @@ footer { position: relative; z-index: 2; border-top: 1px solid var(--border); pa
                             <div class="qr-id" id="qrIdDisplay"></div>
                             <div class="qr-code-container" id="qrCodeContainer"></div>
                             <p class="qr-instruction">📸 <strong>Toma captura de pantalla</strong> de este QR.<br>Lo necesitarás para entrar el día del evento.<br>También lo hemos enviado a tu correo (si lo configuraste).</p>
+                            <p class="qr-personal">✨ Este QR es de uso personal e intransferible.</p>
                         </div>
                         <div class="form-success" id="formSuccessNo">
                             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="rgba(196,154,170,0.75)" stroke-width="1.5" style="display:block;margin:0 auto 18px;"><circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/></svg>
@@ -701,7 +703,7 @@ footer { position: relative; z-index: 2; border-top: 1px solid var(--border); pa
     }
 })();
 
-// CUENTA REGRESIVA AJUSTADA A MÉXICO (UTC-6) - LLEGA A CERO A LAS 4 PM EN PUNTO
+// CUENTA REGRESIVA
 function tick(){
     const t = new Date('2026-06-27T16:00:00-06:00');
     let diff = t - new Date();
@@ -742,7 +744,6 @@ function storeGuestData(qrId,name,mensaje){
 function handleRSVP(e){
     e.preventDefault();
 
-    // Verificar si este navegador ya confirmó
     if (localStorage.getItem('yaConfirmo') === 'true') {
         alert('Ya has confirmado tu asistencia anteriormente. Si necesitas hacer un cambio, por favor contacta a los novios.');
         return;
@@ -771,9 +772,7 @@ function handleRSVP(e){
         formSuccessNo.classList.add('show');
     }
 
-    // Guardar que ya confirmó
     localStorage.setItem('yaConfirmo', 'true');
-
     document.querySelector('.rsvp-card').scrollIntoView({behavior:'smooth',block:'center'});
 }
 
@@ -784,7 +783,7 @@ const io=new IntersectionObserver(entries=>{
 document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
 
 // ============================================================
-// ESCÁNER CON CHECK‑IN
+// ESCÁNER CON CHECK‑IN (con reanudación automática)
 // ============================================================
 let guestsList = [];
 
@@ -848,34 +847,54 @@ async function initScanner() {
     html5QrCode = new Html5Qrcode("qr-reader");
   }
 
-  html5QrCode.start(
-    { facingMode: "environment" },
-    { fps: 10, qrbox: { width: 250, height: 250 } },
-    async (decodedText) => {
-      const scannedId = decodedText.trim();
-      const guest = guestsList.find(g => g.qrId === scannedId);
-      resultDiv.style.display = 'block';
-      if (guest) {
-        resultDiv.innerHTML = '⏳ Verificando…';
-        await sendCheckin(scannedId);
-        resultDiv.className = 'scanner-result valid';
-        resultDiv.innerHTML = `✅ <strong>Acceso válido</strong><br><span style="font-size:16px;">${guest.nombre}</span><br><span style="font-size:12px;opacity:0.7;">ID: ${scannedId}</span><br><span style="font-size:11px;opacity:0.7;">✔ Estado actualizado a "Ya llegó"</span>`;
-      } else {
-        resultDiv.className = 'scanner-result invalid';
-        resultDiv.innerHTML = '❌ <strong>QR no reconocido</strong><br><span style="font-size:14px;">Este código no está en la lista de invitados.</span>';
-      }
-      setTimeout(() => {
+  // Función para iniciar el escáner
+  function startScanning() {
+    html5QrCode.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      async (decodedText) => {
+        // Pausar inmediatamente para evitar múltiples lecturas
         if (html5QrCode && html5QrCode.isScanning) {
-          html5QrCode.pause(true);
+          await html5QrCode.pause(true);
         }
-      }, 500);
-    },
-    (errorMessage) => {}
-  ).catch(err => {
-    resultDiv.style.display = 'block';
-    resultDiv.className = 'scanner-result invalid';
-    resultDiv.innerHTML = '⚠️ Error al iniciar la cámara. Verifica los permisos.';
-  });
+
+        const scannedId = decodedText.trim();
+        const guest = guestsList.find(g => g.qrId === scannedId);
+        resultDiv.style.display = 'block';
+        if (guest) {
+          resultDiv.innerHTML = '⏳ Verificando…';
+          await sendCheckin(scannedId);
+          resultDiv.className = 'scanner-result valid';
+          resultDiv.innerHTML = `✅ <strong>Acceso válido</strong><br><span style="font-size:16px;">${guest.nombre}</span><br><span style="font-size:12px;opacity:0.7;">ID: ${scannedId}</span><br><span style="font-size:11px;opacity:0.7;">✔ Estado actualizado a "Ya llegó"</span>`;
+        } else {
+          resultDiv.className = 'scanner-result invalid';
+          resultDiv.innerHTML = '❌ <strong>QR no reconocido</strong><br><span style="font-size:14px;">Este código no está en la lista de invitados.</span>';
+        }
+
+        // Reanudar después de 3 segundos para leer el siguiente código
+        setTimeout(async () => {
+          if (html5QrCode && !html5QrCode.isScanning) {
+            resultDiv.style.display = 'none';
+            try {
+              await html5QrCode.resume();
+            } catch (e) {
+              // Si hay error, intentar iniciar de nuevo
+              startScanning();
+            }
+          }
+        }, 3000);
+      },
+      (errorMessage) => {
+        // Ignorar errores continuos
+      }
+    ).catch(err => {
+      resultDiv.style.display = 'block';
+      resultDiv.className = 'scanner-result invalid';
+      resultDiv.innerHTML = '⚠️ Error al iniciar la cámara. Verifica los permisos.';
+    });
+  }
+
+  startScanning();
 }
 
 function closeScanner() {
