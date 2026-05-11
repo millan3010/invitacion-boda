@@ -492,13 +492,10 @@ footer { position: relative; z-index: 2; border-top: 1px solid var(--border); pa
         </g>
     </svg>
 
-    <!-- Contenedor del modo escáner (inicialmente oculto, se muestra con clase active) -->
     <div id="scanner-mode">
         <div class="scanner-header"><h2>🔍 Escáner de acceso</h2><p>Apunte la cámara al código QR del invitado</p></div>
         <div id="qr-reader"></div>
         <div id="scanner-result" class="scanner-result" style="display:none;"></div>
-        <!-- Botón que aparece antes de iniciar el escaneo -->
-        <button id="btn-start-scanner" class="btn-start-scanner">📷 Escanear invitación</button>
         <button class="btn-close-scanner" onclick="closeScanner()">✕ Cerrar escáner</button>
     </div>
 
@@ -685,7 +682,7 @@ footer { position: relative; z-index: 2; border-top: 1px solid var(--border); pa
                         </div>
                         <div class="qr-result" id="qrResult">
                             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(201,169,110,0.75)" stroke-width="1.5" style="display:block;margin:0 auto 12px;"><circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/></svg>
-                            <div style="font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--silver-hi);margin-bottom:6px;">¡Tu pase de acceso!</div>
+                            <div id="qrTitle" style="font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--silver-hi);margin-bottom:6px;">¡Tu pase de acceso!</div>
                             <div class="qr-id" id="qrIdDisplay"></div>
                             <div class="qr-code-container" id="qrCodeContainer"></div>
                             <p class="qr-instruction">📸 <strong>Toma captura de pantalla</strong> de este QR.<br>Lo necesitarás para entrar el día del evento.<br>También lo hemos enviado a tu correo (si lo configuraste).</p>
@@ -764,11 +761,32 @@ function storeGuestData(qrId,name,mensaje){
     }).catch(()=>{});
 }
 
+function displayQR(qrId, nombre, mensaje, isRecovery = false) {
+    document.getElementById('formBody').classList.add('hide');
+    document.getElementById('qrResult').classList.add('show');
+    document.getElementById('formSuccessNo').classList.remove('show');
+    document.getElementById('qrIdDisplay').textContent = 'ID: ' + qrId;
+    document.getElementById('qrCodeContainer').innerHTML = '';
+    new QRCode(document.getElementById('qrCodeContainer'), {
+        text: qrId, width: 200, height: 200,
+        colorDark: '#07070d', colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.M
+    });
+    document.getElementById('qrTitle').textContent = isRecovery ? 'Aquí está tu código nuevamente' : '¡Tu pase de acceso!';
+}
+
 function handleRSVP(e){
     e.preventDefault();
 
+    // Si ya existe confirmación previa, mostrar QR guardado
     if (localStorage.getItem('yaConfirmo') === 'true') {
-        alert('Ya has confirmado tu asistencia anteriormente. Si necesitas hacer un cambio, por favor contacta a los novios.');
+        const last = JSON.parse(localStorage.getItem('lastConfirmation') || '{}');
+        if (last.qrId) {
+            displayQR(last.qrId, last.nombre, last.mensaje, true);
+            document.querySelector('.rsvp-card').scrollIntoView({behavior:'smooth',block:'center'});
+        } else {
+            alert('Ya has confirmado tu asistencia anteriormente. Si necesitas hacer un cambio, por favor contacta a los novios.');
+        }
         return;
     }
 
@@ -780,24 +798,30 @@ function handleRSVP(e){
     const formSuccessNo=document.getElementById('formSuccessNo');
     if(asistencia==='si'){
         const qrId=generateQRId();
-        document.getElementById('qrIdDisplay').textContent='ID: '+qrId;
-        document.getElementById('qrCodeContainer').innerHTML='';
-        new QRCode(document.getElementById('qrCodeContainer'),{
-            text:qrId,width:200,height:200,colorDark:'#07070d',colorLight:'#ffffff',correctLevel:QRCode.CorrectLevel.M
-        });
         storeGuestData(qrId,nombre,mensaje);
-        formBody.classList.add('hide');
-        qrResult.classList.add('show');
-        formSuccessNo.classList.remove('show');
+        // Guardar confirmación completa para futuras visitas
+        localStorage.setItem('lastConfirmation', JSON.stringify({qrId, nombre, mensaje}));
+        localStorage.setItem('yaConfirmo', 'true');
+        displayQR(qrId, nombre, mensaje, false);
     }else{
         formBody.classList.add('hide');
         qrResult.classList.remove('show');
         formSuccessNo.classList.add('show');
+        localStorage.setItem('yaConfirmo', 'true'); // evitar que envíe de nuevo aunque no haya QR
     }
 
-    localStorage.setItem('yaConfirmo', 'true');
     document.querySelector('.rsvp-card').scrollIntoView({behavior:'smooth',block:'center'});
 }
+
+// Al cargar, si ya confirmó, mostrar QR automáticamente
+window.addEventListener('DOMContentLoaded', function(){
+    if (localStorage.getItem('yaConfirmo') === 'true') {
+        const last = JSON.parse(localStorage.getItem('lastConfirmation') || '{}');
+        if (last.qrId) {
+            displayQR(last.qrId, last.nombre, last.mensaje, true);
+        }
+    }
+});
 
 // SCROLL REVEAL
 const io=new IntersectionObserver(entries=>{
