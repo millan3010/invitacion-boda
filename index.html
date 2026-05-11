@@ -371,6 +371,26 @@ section { padding: 100px 0; position: relative; z-index: 2; }
 .btn-close-scanner { margin-top: 24px; background: transparent; border: 1px solid var(--silver-lo); color: var(--silver); padding: 10px 28px; font-family: 'Josefin Sans',sans-serif; font-size: 10px; letter-spacing: 3px; text-transform: uppercase; cursor: pointer; transition: all 0.3s; }
 .btn-close-scanner:hover { border-color: var(--silver); box-shadow: 0 0 20px rgba(196,210,228,0.1); }
 
+/* Botón para iniciar el escáner manualmente */
+.btn-start-scanner {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: transparent;
+    border: 1px solid var(--gold-lo);
+    color: var(--gold);
+    padding: 12px 28px;
+    font-family: 'Josefin Sans', sans-serif;
+    font-size: 12px; letter-spacing: 4px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.35s;
+    margin-top: 32px;
+}
+.btn-start-scanner:hover {
+    background: rgba(201,169,110,0.1);
+    border-color: var(--gold);
+    box-shadow: 0 0 24px rgba(201,169,110,0.12);
+}
+
 /* ════════════════════════════════════════════
    FOOTER
    ════════════════════════════════════════════ */
@@ -472,10 +492,13 @@ footer { position: relative; z-index: 2; border-top: 1px solid var(--border); pa
         </g>
     </svg>
 
+    <!-- Contenedor del modo escáner (inicialmente oculto, se muestra con clase active) -->
     <div id="scanner-mode">
         <div class="scanner-header"><h2>🔍 Escáner de acceso</h2><p>Apunte la cámara al código QR del invitado</p></div>
         <div id="qr-reader"></div>
         <div id="scanner-result" class="scanner-result" style="display:none;"></div>
+        <!-- Botón que aparece antes de iniciar el escaneo -->
+        <button id="btn-start-scanner" class="btn-start-scanner">📷 Escanear invitación</button>
         <button class="btn-close-scanner" onclick="closeScanner()">✕ Cerrar escáner</button>
     </div>
 
@@ -783,7 +806,7 @@ const io=new IntersectionObserver(entries=>{
 document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
 
 // ============================================================
-// ESCÁNER CON CHECK‑IN (con reanudación automática)
+// ESCÁNER CON ARRANQUE MANUAL
 // ============================================================
 let guestsList = [];
 
@@ -829,17 +852,18 @@ async function sendCheckin(qrId) {
 
 let html5QrCode = null;
 
-async function initScanner() {
+async function startScanning() {
   const scannerMode = document.getElementById('scanner-mode');
   const mainContent = document.getElementById('main-content');
-  scannerMode.classList.add('active');
-  mainContent.style.display = 'none';
-  document.body.style.overflow = 'hidden';
-
+  const btnStart = document.getElementById('btn-start-scanner');
   const resultDiv = document.getElementById('scanner-result');
+
+  // Ocultar botón de inicio
+  btnStart.style.display = 'none';
   resultDiv.style.display = 'block';
-  resultDiv.className = 'scanner-result';
   resultDiv.innerHTML = '⏳ Cargando lista de invitados…';
+  resultDiv.className = 'scanner-result';
+
   await loadGuestsList();
   resultDiv.style.display = 'none';
 
@@ -847,59 +871,51 @@ async function initScanner() {
     html5QrCode = new Html5Qrcode("qr-reader");
   }
 
-  // Función para iniciar el escáner
-  function startScanning() {
-    html5QrCode.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 250, height: 250 } },
-      async (decodedText) => {
-        // Pausar inmediatamente para evitar múltiples lecturas
-        if (html5QrCode && html5QrCode.isScanning) {
-          await html5QrCode.pause(true);
-        }
-
-        const scannedId = decodedText.trim();
-        const guest = guestsList.find(g => g.qrId === scannedId);
-        resultDiv.style.display = 'block';
-        if (guest) {
-          resultDiv.innerHTML = '⏳ Verificando…';
-          await sendCheckin(scannedId);
-          resultDiv.className = 'scanner-result valid';
-          resultDiv.innerHTML = `✅ <strong>Acceso válido</strong><br><span style="font-size:16px;">${guest.nombre}</span><br><span style="font-size:12px;opacity:0.7;">ID: ${scannedId}</span><br><span style="font-size:11px;opacity:0.7;">✔ Estado actualizado a "Ya llegó"</span>`;
-        } else {
-          resultDiv.className = 'scanner-result invalid';
-          resultDiv.innerHTML = '❌ <strong>QR no reconocido</strong><br><span style="font-size:14px;">Este código no está en la lista de invitados.</span>';
-        }
-
-        // Reanudar después de 3 segundos para leer el siguiente código
-        setTimeout(async () => {
-          if (html5QrCode && !html5QrCode.isScanning) {
-            resultDiv.style.display = 'none';
-            try {
-              await html5QrCode.resume();
-            } catch (e) {
-              // Si hay error, intentar iniciar de nuevo
-              startScanning();
-            }
-          }
-        }, 3000);
-      },
-      (errorMessage) => {
-        // Ignorar errores continuos
+  html5QrCode.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: { width: 250, height: 250 } },
+    async (decodedText) => {
+      if (html5QrCode && html5QrCode.isScanning) {
+        await html5QrCode.pause(true);
       }
-    ).catch(err => {
-      resultDiv.style.display = 'block';
-      resultDiv.className = 'scanner-result invalid';
-      resultDiv.innerHTML = '⚠️ Error al iniciar la cámara. Verifica los permisos.';
-    });
-  }
 
-  startScanning();
+      const scannedId = decodedText.trim();
+      const guest = guestsList.find(g => g.qrId === scannedId);
+      resultDiv.style.display = 'block';
+      if (guest) {
+        resultDiv.innerHTML = '⏳ Verificando…';
+        await sendCheckin(scannedId);
+        resultDiv.className = 'scanner-result valid';
+        resultDiv.innerHTML = `✅ <strong>Acceso válido</strong><br><span style="font-size:16px;">${guest.nombre}</span><br><span style="font-size:12px;opacity:0.7;">ID: ${scannedId}</span><br><span style="font-size:11px;opacity:0.7;">✔ Estado actualizado a "Ya llegó"</span>`;
+      } else {
+        resultDiv.className = 'scanner-result invalid';
+        resultDiv.innerHTML = '❌ <strong>QR no reconocido</strong><br><span style="font-size:14px;">Este código no está en la lista de invitados.</span>';
+      }
+
+      setTimeout(async () => {
+        if (html5QrCode && !html5QrCode.isScanning) {
+          resultDiv.style.display = 'none';
+          try {
+            await html5QrCode.resume();
+          } catch (e) {
+            startScanning();
+          }
+        }
+      }, 3000);
+    },
+    (errorMessage) => {}
+  ).catch(err => {
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'scanner-result invalid';
+    resultDiv.innerHTML = '⚠️ Error al iniciar la cámara. Verifica los permisos.';
+    btnStart.style.display = 'inline-flex'; // Volver a mostrar el botón si falla
+  });
 }
 
 function closeScanner() {
   const scannerMode = document.getElementById('scanner-mode');
   const mainContent = document.getElementById('main-content');
+  const btnStart = document.getElementById('btn-start-scanner');
   if (html5QrCode && html5QrCode.isScanning) {
     html5QrCode.stop().then(() => {
       scannerMode.classList.remove('active');
@@ -916,14 +932,22 @@ function closeScanner() {
     document.body.style.overflow = '';
   }
   document.getElementById('scanner-result').style.display = 'none';
+  btnStart.style.display = 'inline-flex'; // Restaurar botón por si se quiere volver a intentar
 }
 
-// Activar escáner si ?modo=escaner
+// Activar el modo escáner cuando la URL tenga ?modo=escaner, pero sin arrancar automáticamente
 (function checkScannerMode() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('modo') === 'escaner') {
     window.addEventListener('load', () => {
-      setTimeout(initScanner, 800);
+      const scannerMode = document.getElementById('scanner-mode');
+      const mainContent = document.getElementById('main-content');
+      scannerMode.classList.add('active');
+      mainContent.style.display = 'none';
+      document.body.style.overflow = 'hidden';
+
+      // El botón "Escanear invitación" queda visible, esperando ser presionado.
+      document.getElementById('btn-start-scanner').addEventListener('click', startScanning);
     });
   }
 })();
