@@ -137,15 +137,16 @@ body {
     <div id="qr-reader"></div>
     <div id="scanner-result" class="scanner-result"></div>
 
-    <!-- Botón para iniciar el escaneo manualmente -->
+    <!-- Botones dinámicos -->
     <button id="btn-start-scanner" class="btn">📷 Escanear invitación</button>
+    <button id="btn-scan-next" class="btn hidden">🔄 Escanear otro QR</button>
     <button id="btn-close-scanner" class="btn btn-close hidden">✕ Cerrar escáner</button>
 </div>
 
 <script>
-// ============================================================
-// ESCÁNER DE ACCESO INDEPENDIENTE
-// ============================================================
+// ════════════════════════════════════════════
+// CONFIGURACIÓN
+// ════════════════════════════════════════════
 const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxHtyTaQzWau6E05bCI1aYTmDd0c3zhvIVh8F_NmI2QiWwPfqsIL6kg3Pg7jsITarMr/exec';
 
 let guestsList = [];
@@ -153,20 +154,25 @@ let html5QrCode = null;
 let scanningActive = false;
 
 const btnStart = document.getElementById('btn-start-scanner');
+const btnNext = document.getElementById('btn-scan-next');
 const btnClose = document.getElementById('btn-close-scanner');
 const resultDiv = document.getElementById('scanner-result');
 
+// ════════════════════════════════════════════
+// FUNCIONES
+// ════════════════════════════════════════════
 async function loadGuestsList() {
     try {
         const response = await fetch(GOOGLE_SHEETS_URL);
         const data = await response.json();
         if (Array.isArray(data)) {
             guestsList = data;
+            console.log('✅ Lista de invitados cargada:', guestsList.length);
         } else {
-            throw new Error('Formato de respuesta inesperado');
+            throw new Error('Formato inesperado de la lista');
         }
     } catch (err) {
-        console.error('Error al cargar lista, usando respaldo local:', err);
+        console.warn('⚠️ Usando lista local (no se pudo conectar a Google Sheets)');
         const local = JSON.parse(localStorage.getItem('weddingGuests') || '{}');
         guestsList = Object.keys(local).map(id => ({
             qrId: id,
@@ -176,17 +182,13 @@ async function loadGuestsList() {
 }
 
 async function sendCheckin(qrId) {
-    try {
-        await fetch(GOOGLE_SHEETS_URL, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'checkin', qrId: qrId.trim() })
-        });
-        return { result: 'success' };
-    } catch (err) {
-        return { result: 'error', error: err.toString() };
-    }
+    // Enviar en segundo plano, sin esperar la respuesta
+    fetch(GOOGLE_SHEETS_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'checkin', qrId: qrId.trim() })
+    }).catch(() => {});
 }
 
 function hideResult() {
@@ -200,17 +202,26 @@ function showResult(type, message) {
     resultDiv.style.display = 'block';
 }
 
-async function startScanning() {
-    if (scanningActive) return;
+async function stopScanner() {
+    if (html5QrCode && html5QrCode.isScanning) {
+        await html5QrCode.stop();
+    }
+    scanningActive = false;
+}
 
+// Inicia el escáner desde cero
+async function initScanner() {
     btnStart.classList.add('hidden');
+    btnNext.classList.add('hidden');
     btnClose.classList.remove('hidden');
     hideResult();
 
-    // Cargar lista de invitados
-    showResult('', '⏳ Cargando lista de invitados…');
-    await loadGuestsList();
-    hideResult();
+    // Cargar lista SOLO la primera vez (si ya está cargada, la usa)
+    if (guestsList.length === 0) {
+        showResult('', '⏳ Cargando lista de invitados…');
+        await loadGuestsList();
+        hideResult();
+    }
 
     if (!html5QrCode) {
         html5QrCode = new Html5Qrcode("qr-reader");
@@ -219,66 +230,80 @@ async function startScanning() {
     try {
         await html5QrCode.start(
             { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 250, height: 250 } },
+            { fps: 15, qrbox: { width: 280, height: 280 } },  // fps más alto para mayor rapidez
             async (decodedText) => {
-                // Pausar inmediatamente para evitar múltiples lecturas
-                if (html5QrCode && html5QrCode.isScanning) {
-                    await html5QrCode.pause(true);
-                }
+                // Lectura exitosa: detener inmediatamente
+                await stopScanner();
 
                 const scannedId = decodedText.trim();
                 const guest = guestsList.find(g => g.qrId === scannedId);
 
                 if (guest) {
-                    showResult('', '⏳ Verificando acceso…');
-                    await sendCheckin(scannedId);
+                    // Enviar checkin en segundo plano
+                    sendCheckin(scannedId);
                     showResult('valid', `✅ <strong>Acceso válido</strong><br><span style="font-size:18px;">${guest.nombre}</span><br><span style="font-size:12px;opacity:0.7;">ID: ${scannedId}</span><br><span style="font-size:11px;opacity:0.7;">✔ Estado actualizado a "Ya llegó"</span>`);
                 } else {
                     showResult('invalid', '❌ <strong>QR no reconocido</strong><br><span style="font-size:14px;">Este código no está en la lista de invitados.</span>');
                 }
 
-                // Reanudar después de 3 segundos
-                setTimeout(async () => {
-                    hideResult();
-                    if (html5QrCode && !html5QrCode.isScanning) {
-                        try {
-                            await html5QrCode.resume();
-                        } catch (e) {
-                            // Si falla, detenemos y volvemos a iniciar
-                            await html5QrCode.stop();
-                            startScanning();
-                        }
-                    }
-                }, 3000);
+                // Mostrar botón para escanear otro QR
+                btnNext.classList.remove('hidden');
+                btnClose.classList.add('hidden');
+                scanningActive = false;
             },
             (errorMessage) => {
-                // Ignorar errores continuos de escaneo
+                // Ignorar errores continuos de lectura (pasará seguido mientras no haya un QR)
             }
         );
         scanningActive = true;
     } catch (err) {
-        showResult('invalid', '⚠️ Error al iniciar la cámara. Verifica los permisos.');
+        console.error(err);
+        showResult('invalid', '⚠️ No se pudo acceder a la cámara.<br>Por favor, revisa los permisos del navegador.');
         btnStart.classList.remove('hidden');
         btnClose.classList.add('hidden');
     }
 }
 
-async function closeScanner() {
-    if (html5QrCode && html5QrCode.isScanning) {
-        await html5QrCode.stop();
-    }
-    scanningActive = false;
+// Reiniciar escáner para el siguiente invitado
+async function scanNext() {
+    // Detener si aún está activo (por seguridad)
+    await stopScanner();
     hideResult();
-    btnStart.classList.remove('hidden');
+    btnNext.classList.add('hidden');
     btnClose.classList.add('hidden');
+    // Pequeña pausa para liberar la cámara antes de reiniciar
+    setTimeout(() => {
+        initScanner();
+    }, 200);
 }
 
-// Eventos
-btnStart.addEventListener('click', startScanning);
-btnClose.addEventListener('click', closeScanner);
+// Cerrar definitivamente
+async function closeScanner() {
+    await stopScanner();
+    hideResult();
+    btnStart.classList.remove('hidden');
+    btnNext.classList.add('hidden');
+    btnClose.classList.add('hidden');
+    scanningActive = false;
+}
 
-// Por las dudas, al cargar la página el escáner no arranca automáticamente.
-// El botón "Escanear invitación" queda listo para ser presionado.
+// ════════════════════════════════════════════
+// EVENTOS
+// ════════════════════════════════════════════
+btnStart.addEventListener('click', () => {
+    initScanner();
+});
+
+btnNext.addEventListener('click', () => {
+    scanNext();
+});
+
+btnClose.addEventListener('click', () => {
+    closeScanner();
+});
+
+// Por si acaso, al cerrar el botón de cierre normal (si se muestra)
+document.getElementById('btn-close-scanner').addEventListener('click', closeScanner);
 </script>
 </body>
 </html>
