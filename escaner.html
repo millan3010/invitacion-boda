@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Escáner de Acceso · Araceli & Miguel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400;1,600&family=Josefin+Sans:wght@100;200;300;400&display=swap" rel="stylesheet">
+
+<!-- QR Code Scanner -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js">
+</script>
+
+<style>
+:root {
+    --bg: #07070d;
+    --card: #10101a;
+    --border: rgba(196, 210, 228, 0.12);
+    --silver: #b8cad8;
+    --silver-hi: #ddeaf5;
+    --silver-lo: #6a7e90;
+    --gold: #c9a96e;
+    --gold-lo: #7a6038;
+    --rose: #c49aaa;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+    background: var(--bg);
+    color: var(--silver);
+    font-family: 'Josefin Sans', sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.scanner-container {
+    width: 100%;
+    max-width: 480px;
+    text-align: center;
+}
+.scanner-header {
+    margin-bottom: 32px;
+}
+.scanner-header h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: clamp(28px, 6vw, 42px);
+    font-weight: 300;
+    color: var(--silver-hi);
+    margin-bottom: 8px;
+}
+.scanner-header p {
+    font-size: 12px;
+    letter-spacing: 4px;
+    color: var(--silver-lo);
+    text-transform: uppercase;
+}
+#qr-reader {
+    width: 100%;
+    max-width: 420px;
+    margin: 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #000;
+}
+#qr-reader video {
+    width: 100% !important;
+    height: auto !important;
+}
+.scanner-result {
+    margin-top: 24px;
+    padding: 20px 24px;
+    text-align: center;
+    border-radius: 8px;
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 20px;
+    display: none;
+}
+.scanner-result.valid {
+    display: block;
+    background: rgba(122,154,114,0.12);
+    border: 1px solid rgba(122,154,114,0.35);
+    color: #a8d5a2;
+}
+.scanner-result.invalid {
+    display: block;
+    background: rgba(196,154,170,0.12);
+    border: 1px solid rgba(196,154,170,0.35);
+    color: #d5a2a2;
+}
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: 1px solid var(--gold-lo);
+    color: var(--gold);
+    padding: 14px 32px;
+    font-family: 'Josefin Sans', sans-serif;
+    font-size: 13px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-top: 24px;
+}
+.btn:hover {
+    background: rgba(201,169,110,0.1);
+    border-color: var(--gold);
+    box-shadow: 0 0 24px rgba(201,169,110,0.12);
+}
+.btn-close {
+    border-color: var(--silver-lo);
+    color: var(--silver);
+    margin-top: 16px;
+}
+.btn-close:hover {
+    border-color: var(--silver);
+    box-shadow: 0 0 20px rgba(196,210,228,0.1);
+}
+.hidden {
+    display: none !important;
+}
+</style>
+</head>
+<body>
+
+<div class="scanner-container">
+    <div class="scanner-header">
+        <h1>🔍 Escáner de acceso</h1>
+        <p>Apunte la cámara al código QR del invitado</p>
+    </div>
+
+    <div id="qr-reader"></div>
+    <div id="scanner-result" class="scanner-result"></div>
+
+    <!-- Botón para iniciar el escaneo manualmente -->
+    <button id="btn-start-scanner" class="btn">📷 Escanear invitación</button>
+    <button id="btn-close-scanner" class="btn btn-close hidden">✕ Cerrar escáner</button>
+</div>
+
+<script>
+// ============================================================
+// ESCÁNER DE ACCESO INDEPENDIENTE
+// ============================================================
+const GOOGLE_SHEETS_URL = 'https://script.google.com/macros/s/AKfycbxHtyTaQzWau6E05bCI1aYTmDd0c3zhvIVh8F_NmI2QiWwPfqsIL6kg3Pg7jsITarMr/exec';
+
+let guestsList = [];
+let html5QrCode = null;
+let scanningActive = false;
+
+const btnStart = document.getElementById('btn-start-scanner');
+const btnClose = document.getElementById('btn-close-scanner');
+const resultDiv = document.getElementById('scanner-result');
+
+async function loadGuestsList() {
+    try {
+        const response = await fetch(GOOGLE_SHEETS_URL);
+        const data = await response.json();
+        if (Array.isArray(data)) {
+            guestsList = data;
+        } else {
+            throw new Error('Formato de respuesta inesperado');
+        }
+    } catch (err) {
+        console.error('Error al cargar lista, usando respaldo local:', err);
+        const local = JSON.parse(localStorage.getItem('weddingGuests') || '{}');
+        guestsList = Object.keys(local).map(id => ({
+            qrId: id,
+            nombre: local[id].nombre
+        }));
+    }
+}
+
+async function sendCheckin(qrId) {
+    try {
+        await fetch(GOOGLE_SHEETS_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'checkin', qrId: qrId.trim() })
+        });
+        return { result: 'success' };
+    } catch (err) {
+        return { result: 'error', error: err.toString() };
+    }
+}
+
+function hideResult() {
+    resultDiv.style.display = 'none';
+    resultDiv.className = 'scanner-result';
+}
+
+function showResult(type, message) {
+    resultDiv.innerHTML = message;
+    resultDiv.className = `scanner-result ${type}`;
+    resultDiv.style.display = 'block';
+}
+
+async function startScanning() {
+    if (scanningActive) return;
+
+    btnStart.classList.add('hidden');
+    btnClose.classList.remove('hidden');
+    hideResult();
+
+    // Cargar lista de invitados
+    showResult('', '⏳ Cargando lista de invitados…');
+    await loadGuestsList();
+    hideResult();
+
+    if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode("qr-reader");
+    }
+
+    try {
+        await html5QrCode.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            async (decodedText) => {
+                // Pausar inmediatamente para evitar múltiples lecturas
+                if (html5QrCode && html5QrCode.isScanning) {
+                    await html5QrCode.pause(true);
+                }
+
+                const scannedId = decodedText.trim();
+                const guest = guestsList.find(g => g.qrId === scannedId);
+
+                if (guest) {
+                    showResult('', '⏳ Verificando acceso…');
+                    await sendCheckin(scannedId);
+                    showResult('valid', `✅ <strong>Acceso válido</strong><br><span style="font-size:18px;">${guest.nombre}</span><br><span style="font-size:12px;opacity:0.7;">ID: ${scannedId}</span><br><span style="font-size:11px;opacity:0.7;">✔ Estado actualizado a "Ya llegó"</span>`);
+                } else {
+                    showResult('invalid', '❌ <strong>QR no reconocido</strong><br><span style="font-size:14px;">Este código no está en la lista de invitados.</span>');
+                }
+
+                // Reanudar después de 3 segundos
+                setTimeout(async () => {
+                    hideResult();
+                    if (html5QrCode && !html5QrCode.isScanning) {
+                        try {
+                            await html5QrCode.resume();
+                        } catch (e) {
+                            // Si falla, detenemos y volvemos a iniciar
+                            await html5QrCode.stop();
+                            startScanning();
+                        }
+                    }
+                }, 3000);
+            },
+            (errorMessage) => {
+                // Ignorar errores continuos de escaneo
+            }
+        );
+        scanningActive = true;
+    } catch (err) {
+        showResult('invalid', '⚠️ Error al iniciar la cámara. Verifica los permisos.');
+        btnStart.classList.remove('hidden');
+        btnClose.classList.add('hidden');
+    }
+}
+
+async function closeScanner() {
+    if (html5QrCode && html5QrCode.isScanning) {
+        await html5QrCode.stop();
+    }
+    scanningActive = false;
+    hideResult();
+    btnStart.classList.remove('hidden');
+    btnClose.classList.add('hidden');
+}
+
+// Eventos
+btnStart.addEventListener('click', startScanning);
+btnClose.addEventListener('click', closeScanner);
+
+// Por las dudas, al cargar la página el escáner no arranca automáticamente.
+// El botón "Escanear invitación" queda listo para ser presionado.
+</script>
+</body>
+</html>
